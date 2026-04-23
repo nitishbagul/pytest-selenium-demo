@@ -26,12 +26,27 @@ pipeline {
     }
 
     environment {
-        PYTHON = 'python3.12'
+        // Ensure Homebrew tools (Python, git, chromedriver) are findable.
+        // Covers Apple Silicon (/opt/homebrew) and Intel (/usr/local) Macs.
+        PATH = "/opt/homebrew/bin:/usr/local/bin:${env.PATH}"
         VENV = '.venv'
-        HEADLESS = 'true'
     }
 
     stages {
+        stage('Verify Environment') {
+            steps {
+                sh '''
+                    echo "=== PATH ==="
+                    echo $PATH
+                    echo "=== Which Python ==="
+                    which python3 || echo "python3 not found"
+                    python3 --version || echo "python3 --version failed"
+                    echo "=== Chrome check ==="
+                    ls -la "/Applications/Google Chrome.app" 2>/dev/null || echo "Chrome not at default path"
+                '''
+            }
+        }
+
         stage('Checkout') {
             steps {
                 checkout scm
@@ -41,10 +56,11 @@ pipeline {
         stage('Setup Python Environment') {
             steps {
                 sh '''
-                    ${PYTHON} -m venv ${VENV}
+                    python3 -m venv ${VENV}
                     . ${VENV}/bin/activate
                     pip install --upgrade pip
                     pip install -r requirements.txt
+                    pip list
                 '''
             }
         }
@@ -61,9 +77,9 @@ pipeline {
                     fi
 
                     BASE_URL=${BASE_URL} \
-                    HEADLESS=${HEADLESS} \
                     pytest ${MARKER_FLAG} \
                         --browser=${BROWSER} \
+                        --headless \
                         -n 2 \
                         --reruns 1 \
                         --alluredir=allure-results \
@@ -76,15 +92,12 @@ pipeline {
 
     post {
         always {
-            // Archive test artifacts even on failure
             archiveArtifacts artifacts: 'reports/**, screenshots/**, allure-results/**',
                            allowEmptyArchive: true,
                            fingerprint: true
 
-            // Publish JUnit results so Jenkins shows pass/fail trends
             junit testResults: 'reports/junit.xml', allowEmptyResults: true
 
-            // Publish the HTML report
             publishHTML([
                 allowMissing: true,
                 alwaysLinkToLastBuild: true,
@@ -101,7 +114,6 @@ pipeline {
             echo '❌ Build failed. Check test report and screenshots.'
         }
         cleanup {
-            // Clean the workspace so next build starts fresh
             cleanWs()
         }
     }
